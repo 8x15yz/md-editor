@@ -57,8 +57,12 @@
     color: #ccc;
   }
   .win-item:hover { background: #2a2c33; }
-  .win-item.active {
+  .win-item.active-primary {
     background: #3b82f6;
+    color: #fff;
+  }
+  .win-item.active-secondary {
+    background: #7c3aed;
     color: #fff;
   }
   .win-item .name {
@@ -67,8 +71,15 @@
     white-space: nowrap;
     flex: 1;
   }
+  .win-item .split-btn {
+    margin-left: 4px;
+    color: inherit;
+    opacity: 0.6;
+    font-size: 12px;
+  }
+  .win-item .split-btn:hover { opacity: 1; }
   .win-item .close-x {
-    margin-left: 6px;
+    margin-left: 4px;
     color: inherit;
     opacity: 0.6;
     font-size: 12px;
@@ -80,7 +91,29 @@
     flex: 1;
     padding: 24px;
     overflow-y: auto;
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
   }
+  .pane {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+  }
+  .pane-close {
+    position: absolute;
+    top: 20px;
+    right: 24px;
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: 6px;
+    background: #eee;
+    color: #555;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .pane-close:hover { background: #ddd; }
   .empty-state {
     color: #999;
     font-size: 14px;
@@ -152,6 +185,21 @@
     background: #fafafa;
   }
   .result-box.error { color: #d92d20; background: #fef3f2; border-color: #fecdca; }
+  .json-badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    color: #065f46;
+    background: #d1fae5;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-bottom: 6px;
+  }
+  .json-key { color: #9333ea; }
+  .json-string { color: #15803d; }
+  .json-number { color: #2563eb; }
+  .json-boolean { color: #dc2626; }
+  .json-null { color: #6b7280; }
   .meta {
     font-size: 12px;
     color: #777;
@@ -178,8 +226,8 @@
 <script>
 (function () {
   // 세션에서만 유효한 상태 (새로고침하면 사라짐)
-  let windows = [];      // { id, name }
-  let activeId = null;
+  let windows = [];        // { id, name }
+  let paneIds = [null, null]; // [주 창 id, 우측 분할 창 id]
   let counter = 0;
 
   const windowList = document.getElementById('windowList');
@@ -192,21 +240,43 @@
     counter += 1;
     const win = { id: 'w' + Date.now() + '_' + counter, name: '창 ' + counter };
     windows.push(win);
-    activeId = win.id;
+    paneIds[0] = win.id;
     render();
   }
 
   function closeWindow(id, evt) {
     evt.stopPropagation();
     windows = windows.filter(w => w.id !== id);
-    if (activeId === id) {
-      activeId = windows.length ? windows[windows.length - 1].id : null;
+    paneIds = paneIds.map(pid => (pid === id ? null : pid));
+    if (!paneIds[0] && paneIds[1]) {
+      paneIds[0] = paneIds[1];
+      paneIds[1] = null;
+    }
+    if (!paneIds[0] && windows.length) {
+      paneIds[0] = windows[windows.length - 1].id;
     }
     render();
   }
 
   function selectWindow(id) {
-    activeId = id;
+    paneIds[0] = id;
+    if (paneIds[1] === id) paneIds[1] = null;
+    render();
+  }
+
+  function splitWindow(id, evt) {
+    evt.stopPropagation();
+    if (id === paneIds[0]) return; // 이미 주 창인 경우 무시
+    paneIds[1] = id;
+    render();
+  }
+
+  function closePane(index) {
+    paneIds[index] = null;
+    if (!paneIds[0] && paneIds[1]) {
+      paneIds[0] = paneIds[1];
+      paneIds[1] = null;
+    }
     render();
   }
 
@@ -215,12 +285,21 @@
     windowList.innerHTML = '';
     windows.forEach(w => {
       const item = document.createElement('div');
-      item.className = 'win-item' + (w.id === activeId ? ' active' : '');
+      let cls = 'win-item';
+      if (w.id === paneIds[0]) cls += ' active-primary';
+      else if (w.id === paneIds[1]) cls += ' active-secondary';
+      item.className = cls;
       item.addEventListener('click', () => selectWindow(w.id));
 
       const name = document.createElement('span');
       name.className = 'name';
       name.textContent = w.name;
+
+      const splitBtn = document.createElement('span');
+      splitBtn.className = 'split-btn';
+      splitBtn.textContent = '⇒';
+      splitBtn.title = '우측에 나란히 열기';
+      splitBtn.addEventListener('click', (e) => splitWindow(w.id, e));
 
       const closeX = document.createElement('span');
       closeX.className = 'close-x';
@@ -228,21 +307,64 @@
       closeX.addEventListener('click', (e) => closeWindow(w.id, e));
 
       item.appendChild(name);
+      item.appendChild(splitBtn);
       item.appendChild(closeX);
       windowList.appendChild(item);
     });
 
     // 메인 영역 렌더
     main.innerHTML = '';
-    const active = windows.find(w => w.id === activeId);
-    if (!active) {
+    const primary = windows.find(w => w.id === paneIds[0]);
+    if (!primary) {
       const empty = document.createElement('div');
       empty.className = 'empty-state';
       empty.textContent = '왼쪽에서 "+ 새 창 만들기"를 눌러 시작하세요.';
       main.appendChild(empty);
       return;
     }
-    main.appendChild(buildPanel(active));
+
+    const leftPane = document.createElement('div');
+    leftPane.className = 'pane';
+    leftPane.appendChild(buildPanel(primary));
+    main.appendChild(leftPane);
+
+    const secondary = windows.find(w => w.id === paneIds[1]);
+    if (secondary) {
+      const rightPane = document.createElement('div');
+      rightPane.className = 'pane';
+
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'pane-close';
+      closeBtn.textContent = '✕';
+      closeBtn.title = '분할 닫기';
+      closeBtn.addEventListener('click', () => closePane(1));
+
+      rightPane.appendChild(buildPanel(secondary));
+      rightPane.appendChild(closeBtn);
+      main.appendChild(rightPane);
+    }
+  }
+
+  // 간단한 JSON 문법 하이라이팅 (텍스트 -> HTML)
+  function highlightJson(jsonText) {
+    const escaped = jsonText
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    return escaped.replace(
+      /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false)\b|\bnull\b|-?\d+(\.\d+)?([eE][+-]?\d+)?)/g,
+      function (match) {
+        let cls = 'json-number';
+        if (/^"/.test(match)) {
+          cls = /:$/.test(match) ? 'json-key' : 'json-string';
+        } else if (/true|false/.test(match)) {
+          cls = 'json-boolean';
+        } else if (/null/.test(match)) {
+          cls = 'json-null';
+        }
+        return '<span class="' + cls + '">' + match + '</span>';
+      }
+    );
   }
 
   function buildPanel(win) {
@@ -287,7 +409,23 @@
     panel.appendChild(btnRow);
 
     const resultLabel = document.createElement('label');
-    resultLabel.textContent = '결과';
+    resultLabel.style.display = 'flex';
+    resultLabel.style.alignItems = 'center';
+    resultLabel.style.justifyContent = 'space-between';
+    resultLabel.style.gap = '8px';
+
+    const resultLabelText = document.createElement('span');
+    resultLabelText.textContent = '결과';
+    resultLabel.appendChild(resultLabelText);
+
+    const jsonToggleBtn = document.createElement('button');
+    jsonToggleBtn.className = 'action';
+    jsonToggleBtn.style.display = 'none';
+    jsonToggleBtn.style.padding = '2px 10px';
+    jsonToggleBtn.style.fontSize = '11px';
+    jsonToggleBtn.textContent = 'JSON 예쁘게 보기';
+    resultLabel.appendChild(jsonToggleBtn);
+
     panel.appendChild(resultLabel);
 
     const resultBox = document.createElement('div');
@@ -296,12 +434,60 @@
     panel.appendChild(resultBox);
 
     let previewImg = null;
+    let lastRawText = '';
+    let lastParsedJson = null;
+    let showingPretty = false;
 
     function clearPreview() {
       if (previewImg) {
         previewImg.remove();
         previewImg = null;
       }
+    }
+
+    function renderRaw() {
+      showingPretty = false;
+      jsonToggleBtn.textContent = 'JSON 예쁘게 보기';
+      resultBox.className = 'result-box';
+      resultBox.textContent = lastRawText;
+    }
+
+    function renderPretty() {
+      if (lastParsedJson === null) return;
+      showingPretty = true;
+      jsonToggleBtn.textContent = '원본 텍스트 보기';
+      resultBox.className = 'result-box';
+      resultBox.innerHTML = '';
+      const pre = document.createElement('pre');
+      pre.style.margin = '0';
+      pre.style.fontFamily = 'Consolas, monospace';
+      pre.innerHTML = highlightJson(JSON.stringify(lastParsedJson, null, 2));
+      resultBox.appendChild(pre);
+    }
+
+    jsonToggleBtn.addEventListener('click', () => {
+      if (showingPretty) renderRaw();
+      else renderPretty();
+    });
+
+    function renderDecodedResult(text) {
+      lastRawText = text;
+      lastParsedJson = null;
+
+      // 전체 문자열이 유효한 JSON일 때만 "예쁘게 보기" 버튼 노출.
+      // 평문+JSON이 섞여있거나 일부만 JSON이면 파싱이 실패하므로
+      // 버튼 없이 원본 텍스트 그대로 보여준다 (내용 손실 없음).
+      const trimmed = text.trim();
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        try {
+          lastParsedJson = JSON.parse(trimmed);
+        } catch (e) {
+          lastParsedJson = null;
+        }
+      }
+
+      jsonToggleBtn.style.display = lastParsedJson !== null ? 'inline-block' : 'none';
+      renderRaw();
     }
 
     decodeBtn.addEventListener('click', () => {
@@ -329,8 +515,7 @@
           text = binary;
         }
 
-        resultBox.className = 'result-box';
-        resultBox.textContent = text;
+        renderDecodedResult(text);
 
         if (dataUrlMatch && dataUrlMatch[1].startsWith('image/')) {
           previewImg = document.createElement('img');
