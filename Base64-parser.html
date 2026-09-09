@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Base64 Parser</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+    display: flex;
+    height: 100vh;
+    background: #f4f5f7;
+  }
+
+  /* 좌측 사이드바 */
+  #sidebar {
+    width: 220px;
+    background: #1e1f24;
+    color: #eee;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  #sidebar h1 {
+    font-size: 14px;
+    padding: 14px 12px 8px;
+    margin: 0;
+    color: #9aa0aa;
+    font-weight: 600;
+  }
+  #addBtn {
+    margin: 0 12px 10px;
+    padding: 8px 10px;
+    background: #3b82f6;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  #addBtn:hover { background: #2563eb; }
+  #windowList {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 8px;
+  }
+  .win-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    margin-bottom: 4px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #ccc;
+  }
+  .win-item:hover { background: #2a2c33; }
+  .win-item.active {
+    background: #3b82f6;
+    color: #fff;
+  }
+  .win-item .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .win-item .close-x {
+    margin-left: 6px;
+    color: inherit;
+    opacity: 0.6;
+    font-size: 12px;
+  }
+  .win-item .close-x:hover { opacity: 1; }
+
+  /* 메인 영역 */
+  #main {
+    flex: 1;
+    padding: 24px;
+    overflow-y: auto;
+  }
+  .empty-state {
+    color: #999;
+    font-size: 14px;
+    margin-top: 40px;
+    text-align: center;
+  }
+  .panel {
+    max-width: 760px;
+    margin: 0 auto;
+    background: #fff;
+    border-radius: 10px;
+    padding: 20px 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .panel h2 {
+    margin: 0 0 4px;
+    font-size: 16px;
+  }
+  .panel .win-id {
+    font-size: 12px;
+    color: #999;
+    margin-bottom: 16px;
+  }
+  label {
+    display: block;
+    font-size: 12px;
+    color: #555;
+    margin-bottom: 6px;
+    font-weight: 600;
+  }
+  textarea {
+    width: 100%;
+    min-height: 110px;
+    font-family: "Consolas", monospace;
+    font-size: 13px;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    resize: vertical;
+  }
+  .btn-row {
+    margin: 10px 0 18px;
+    display: flex;
+    gap: 8px;
+  }
+  button.action {
+    padding: 8px 14px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    background: #eee;
+    color: #333;
+  }
+  button.action.primary {
+    background: #111827;
+    color: #fff;
+  }
+  button.action:hover { filter: brightness(0.95); }
+
+  .result-box {
+    border: 1px solid #eee;
+    border-radius: 6px;
+    padding: 12px;
+    min-height: 60px;
+    font-size: 13px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    background: #fafafa;
+  }
+  .result-box.error { color: #d92d20; background: #fef3f2; border-color: #fecdca; }
+  .meta {
+    font-size: 12px;
+    color: #777;
+    margin-top: 8px;
+  }
+  .preview-img {
+    max-width: 100%;
+    margin-top: 10px;
+    border-radius: 6px;
+    border: 1px solid #eee;
+  }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h1>BASE64 세션 창</h1>
+  <button id="addBtn">+ 새 창 만들기</button>
+  <div id="windowList"></div>
+</div>
+
+<div id="main"></div>
+
+<script>
+(function () {
+  // 세션에서만 유효한 상태 (새로고침하면 사라짐)
+  let windows = [];      // { id, name }
+  let activeId = null;
+  let counter = 0;
+
+  const windowList = document.getElementById('windowList');
+  const main = document.getElementById('main');
+  const addBtn = document.getElementById('addBtn');
+
+  addBtn.addEventListener('click', () => createWindow());
+
+  function createWindow() {
+    counter += 1;
+    const win = { id: 'w' + Date.now() + '_' + counter, name: '창 ' + counter };
+    windows.push(win);
+    activeId = win.id;
+    render();
+  }
+
+  function closeWindow(id, evt) {
+    evt.stopPropagation();
+    windows = windows.filter(w => w.id !== id);
+    if (activeId === id) {
+      activeId = windows.length ? windows[windows.length - 1].id : null;
+    }
+    render();
+  }
+
+  function selectWindow(id) {
+    activeId = id;
+    render();
+  }
+
+  function render() {
+    // 사이드바 목록 렌더
+    windowList.innerHTML = '';
+    windows.forEach(w => {
+      const item = document.createElement('div');
+      item.className = 'win-item' + (w.id === activeId ? ' active' : '');
+      item.addEventListener('click', () => selectWindow(w.id));
+
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = w.name;
+
+      const closeX = document.createElement('span');
+      closeX.className = 'close-x';
+      closeX.textContent = '✕';
+      closeX.addEventListener('click', (e) => closeWindow(w.id, e));
+
+      item.appendChild(name);
+      item.appendChild(closeX);
+      windowList.appendChild(item);
+    });
+
+    // 메인 영역 렌더
+    main.innerHTML = '';
+    const active = windows.find(w => w.id === activeId);
+    if (!active) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.textContent = '왼쪽에서 "+ 새 창 만들기"를 눌러 시작하세요.';
+      main.appendChild(empty);
+      return;
+    }
+    main.appendChild(buildPanel(active));
+  }
+
+  function buildPanel(win) {
+    const panel = document.createElement('div');
+    panel.className = 'panel';
+
+    const title = document.createElement('h2');
+    title.textContent = win.name;
+    panel.appendChild(title);
+
+    const idLine = document.createElement('div');
+    idLine.className = 'win-id';
+    idLine.textContent = 'id: ' + win.id;
+    panel.appendChild(idLine);
+
+    const label = document.createElement('label');
+    label.textContent = 'Base64 문자열 입력';
+    panel.appendChild(label);
+
+    const textarea = document.createElement('textarea');
+    textarea.placeholder = '여기에 base64 문자열을 붙여넣으세요 (data URL 형식도 가능)';
+    panel.appendChild(textarea);
+
+    const btnRow = document.createElement('div');
+    btnRow.className = 'btn-row';
+
+    const decodeBtn = document.createElement('button');
+    decodeBtn.className = 'action primary';
+    decodeBtn.textContent = '디코드 (Base64 → 텍스트)';
+
+    const encodeBtn = document.createElement('button');
+    encodeBtn.className = 'action';
+    encodeBtn.textContent = '인코드 (텍스트 → Base64)';
+
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'action';
+    clearBtn.textContent = '초기화';
+
+    btnRow.appendChild(decodeBtn);
+    btnRow.appendChild(encodeBtn);
+    btnRow.appendChild(clearBtn);
+    panel.appendChild(btnRow);
+
+    const resultLabel = document.createElement('label');
+    resultLabel.textContent = '결과';
+    panel.appendChild(resultLabel);
+
+    const resultBox = document.createElement('div');
+    resultBox.className = 'result-box';
+    resultBox.textContent = '결과가 여기에 표시됩니다.';
+    panel.appendChild(resultBox);
+
+    let previewImg = null;
+
+    function clearPreview() {
+      if (previewImg) {
+        previewImg.remove();
+        previewImg = null;
+      }
+    }
+
+    decodeBtn.addEventListener('click', () => {
+      clearPreview();
+      const raw = textarea.value.trim();
+      if (!raw) {
+        resultBox.className = 'result-box error';
+        resultBox.textContent = '입력값이 비어있습니다.';
+        return;
+      }
+
+      // data URL 형식이면 이미지로 미리보기 시도
+      const dataUrlMatch = raw.match(/^data:(.+?);base64,(.*)$/s);
+      const b64Body = dataUrlMatch ? dataUrlMatch[2] : raw;
+
+      try {
+        const binary = atob(b64Body.replace(/\s/g, ''));
+        // 텍스트로 시도 (UTF-8 decoding)
+        let text;
+        try {
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+        } catch (e) {
+          text = binary;
+        }
+
+        resultBox.className = 'result-box';
+        resultBox.textContent = text;
+
+        if (dataUrlMatch && dataUrlMatch[1].startsWith('image/')) {
+          previewImg = document.createElement('img');
+          previewImg.className = 'preview-img';
+          previewImg.src = raw;
+          panel.appendChild(previewImg);
+        }
+      } catch (e) {
+        resultBox.className = 'result-box error';
+        resultBox.textContent = '디코드 실패: 올바른 base64 문자열이 아닙니다.\n(' + e.message + ')';
+      }
+    });
+
+    encodeBtn.addEventListener('click', () => {
+      clearPreview();
+      const raw = textarea.value;
+      if (!raw) {
+        resultBox.className = 'result-box error';
+        resultBox.textContent = '입력값이 비어있습니다.';
+        return;
+      }
+      try {
+        const bytes = new TextEncoder().encode(raw);
+        let binary = '';
+        bytes.forEach(b => binary += String.fromCharCode(b));
+        const encoded = btoa(binary);
+        resultBox.className = 'result-box';
+        resultBox.textContent = encoded;
+      } catch (e) {
+        resultBox.className = 'result-box error';
+        resultBox.textContent = '인코드 실패: ' + e.message;
+      }
+    });
+
+    clearBtn.addEventListener('click', () => {
+      textarea.value = '';
+      clearPreview();
+      resultBox.className = 'result-box';
+      resultBox.textContent = '결과가 여기에 표시됩니다.';
+    });
+
+    return panel;
+  }
+
+  // 시작 시 창 하나 자동 생성
+  createWindow();
+})();
+</script>
+</body>
+</html>
